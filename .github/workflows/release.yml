@@ -1,0 +1,77 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - release
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-upload:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+          - target: x86_64-apple-darwin
+            os: macos-latest
+          - target: aarch64-apple-darwin
+            os: macos-latest
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      
+      - name: Install Rust
+        run: rustup target add ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Install musl-tools if necessary
+        if: matrix.os == 'ubuntu-latest' && contains(matrix.target, 'musl')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+
+      - name: Build Binary
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Ensure Release Exists
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ github.ref_name }}"
+
+      - name: Upload Asset
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          # Determine binary path (Windows has .exe)
+          BIN_PATH="target/${{ matrix.target }}/release/biter"
+          if [ "${{ matrix.os }}" == "windows-latest" ]; then
+            BIN_PATH="${BIN_PATH}.exe"
+          fi
+          
+          # Rename binary to include target name for clarity in downloads
+          ASSET_NAME="biter-${{ matrix.target }}"
+          if [ "${{ matrix.os }}" == "windows-latest" ]; then
+            ASSET_NAME="${ASSET_NAME}.exe"
+          fi
+          
+          cp "$BIN_PATH" "$ASSET_NAME"
+          
+          # Upload to the release created in the previous job
+          gh release upload "${{ github.ref_name }}" "$ASSET_NAME" --clobber
